@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AxFormExtension xmlns:i="http://www.w3.org/2001/XMLSchema-instance" xmlns="Microsoft.Dynamics.AX.Metadata.V6">
+	<Name>DMFSourceXMLToEntityMap.CodeSnippetsExtension</Name>
+	<ControlModifications />
+	<Controls>
+		<AxFormExtensionControl xmlns="">
+			<Name>FormExtensionControlxi2vfteo1</Name>
+			<FormControl xmlns=""
+				i:type="AxFormMenuButtonControl">
+				<Name>CSTextQualifierUpdate</Name>
+				<HelpText>@CS:UpdateTextQualifiers</HelpText>
+				<Type>MenuButton</Type>
+				<FormControlExtension
+					i:nil="true" />
+				<Controls>
+					<AxFormControl xmlns=""
+						i:type="AxFormButtonControl">
+						<Name>CSTextQualifierEnable</Name>
+						<HelpText>@CS:Enable</HelpText>
+						<Type>Button</Type>
+						<FormControlExtension
+							i:nil="true" />
+						<Text>@CS:EnableTextQualifierForAllFields</Text>
+					</AxFormControl>
+					<AxFormControl xmlns=""
+						i:type="AxFormButtonControl">
+						<Name>CSTextQualifierDisable</Name>
+						<HelpText>@CS:Disable</HelpText>
+						<Type>Button</Type>
+						<FormControlExtension
+							i:nil="true" />
+						<Text>@CS:DisableTextQualifierForAllFields</Text>
+					</AxFormControl>
+				</Controls>
+				<Text>@CS:Update</Text>
+			</FormControl>
+			<Parent>AdvancedMappingOptions</Parent>
+		</AxFormExtensionControl>
+	</Controls>
+	<DataSources />
+	<Parts />
+	<PropertyModifications />
+</AxFormExtension>

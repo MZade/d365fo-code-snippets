@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AxClass xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+	<Name>CSDMFSourceXMLToEntityMapFormHandler</Name>
+	<SourceCode>
+		<Declaration><![CDATA[
+/// <summary>
+/// Form handler class for <c>DMFSourceXMLToEntityMap</c> form
+/// </summary>
+class CSDMFSourceXMLToEntityMapFormHandler
+{
+}
+]]></Declaration>
+		<Methods>
+			<Method>
+				<Name>updateTextQualifier</Name>
+				<Source><![CDATA[
+    /// <summary>
+    /// Execution of text qualifiers update
+    /// </summary>
+    /// <param name = "_sender">Form control that launch execution</param>
+    /// <param name = "_value">
+    /// New value of text qualifiers
+    /// </param>
+    public static void updateTextQualifier(FormControl _sender, boolean _value)
+    {
+        FormDataSource          fds     = _sender.formRun().dataSource(1);
+        DMFSourceXMLToEntityMap record  = fds.cursor();
+        DMFSourceXMLToEntityMap recordUpd;
+
+        ttsbegin;
+        
+        while select forupdate recordUpd
+            where recordUpd.DefinitionGroup == record.DefinitionGroup
+               && recordUpd.Entity          == record.Entity
+        {
+            recordUpd.TextQualifier = _value;
+            recordUpd.update();
+        }
+
+        ttscommit;
+
+        fds.research(true);
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>CSTextQualifierEnable_OnClicked</Name>
+				<Source><![CDATA[
+    /// <summary>
+    /// Enabling of text qualifiers for mapping
+    /// </summary>
+    /// <param name="sender">Form control to be executed</param>
+    /// <param name="e">Execution parameters</param>
+    [FormControlEventHandler(formControlStr(DMFSourceXMLToEntityMap, CSTextQualifierEnable), FormControlEventType::Clicked),
+     SuppressBPWarningAttribute('BPParameterNotUsed', 'e')]
+    public static void CSTextQualifierEnable_OnClicked(FormControl sender, FormControlEventArgs e)
+    {
+        CSDMFSourceXMLToEntityMapFormHandler::updateTextQualifier(sender, NoYes::Yes);
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>CSTextQualifierDisable_OnClicked</Name>
+				<Source><![CDATA[
+    /// <summary>
+    /// Disabling of text qualifiers for mapping
+    /// </summary>
+    /// <param name="sender">Form control to be executed</param>
+    /// <param name="e">Execution parameters</param>
+    [FormControlEventHandler(formControlStr(DMFSourceXMLToEntityMap, CSTextQualifierDisable), FormControlEventType::Clicked),
+     SuppressBPWarningAttribute('BPParameterNotUsed', 'e')]
+    public static void CSTextQualifierDisable_OnClicked(FormControl sender, FormControlEventArgs e)
+    {
+        CSDMFSourceXMLToEntityMapFormHandler::updateTextQualifier(sender, NoYes::No);
+    }
+
+]]></Source>
+			</Method>
+		</Methods>
+	</SourceCode>
+</AxClass>

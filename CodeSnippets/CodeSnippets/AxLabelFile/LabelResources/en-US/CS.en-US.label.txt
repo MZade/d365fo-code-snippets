@@ -1,0 +1,12 @@
+﻿NewLabel0=Label files created on 10/23/2018 02:13:38 for label file Id CS and language en-US
+ ;Label file comment - see above label
+UpdateTextQualifiers=Update text qualifiers
+ ;New Comment
+EnableTextQualifierForAllFields=Enable text qualifier for all fields
+ ;New Comment
+DisableTextQualifierForAllFields=Disable text qualifier for all fields
+ ;New Comment
+Enable=Enable
+ ;New Comment
+Disable=Disable
+ ;New Comment
