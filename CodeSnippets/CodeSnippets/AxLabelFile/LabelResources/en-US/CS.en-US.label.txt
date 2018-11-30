@@ -10,3 +10,15 @@ Enable=Enable
  ;New Comment
 Disable=Disable
  ;New Comment
+AzureStorageParamTab=Azure storage information
+ ;New Comment
+AzureStorageAccountID=Storage account ID
+ ;New Comment
+AzureStorageAccountName=Storage account name
+ ;New Comment
+AzureStorageAccountKey=Storage account key
+ ;New Comment
+AzureStorageAccountShareName=Share name
+ ;New Comment
+AzureStorageFileRelativePath=Export path
+ ;New Comment

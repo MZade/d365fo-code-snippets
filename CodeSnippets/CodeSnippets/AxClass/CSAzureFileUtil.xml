@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AxClass xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+	<Name>CSAzureFileUtil</Name>
+	<SourceCode>
+		<Declaration><![CDATA[
+using Microsoft.Azure;
+using Microsoft.WindowsAzure.Storage;
+using Microsoft.WindowsAzure.Storage.File;
+
+/// <summary>
+/// This class provides basic functionality to upload/download files from and to Azure File Storage
+/// </summary>
+public class CSAzureFileUtil
+{    
+    str shareName;
+    str storageAccountName;
+    str storageAccountKey;
+
+    boolean writeToRoot;
+    str workingFolderPath;
+    
+    Microsoft.WindowsAzure.Storage.CloudStorageAccount cloudStorageAccount;
+    Microsoft.WindowsAzure.Storage.File.CloudFileClient cloudFileClient;
+    Microsoft.WindowsAzure.Storage.File.CloudFileShare cloudFileShare;
+    Microsoft.WindowsAzure.Storage.File.CloudFileDirectory rootDirectory;
+    Microsoft.WindowsAzure.Storage.File.CloudFileDirectory fileDirectory;
+    Microsoft.WindowsAzure.Storage.File.CloudFileDirectory directoryToUse;
+
+}
+]]></Declaration>
+		<Methods>
+			<Method>
+				<Name>connectionString</Name>
+				<Source><![CDATA[
+    private str connectionString()
+    {
+        return strFmt('DefaultEndpointsProtocol=https;AccountName=%1;AccountKey=%2',storageAccountName, storageAccountKey);
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>credentials</Name>
+				<Source><![CDATA[
+    private Microsoft.WindowsAzure.Storage.Auth.StorageCredentials credentials()
+    {
+            return new Microsoft.WindowsAzure.Storage.Auth.StorageCredentials(storageAccountName, storageAccountKey);
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>workingDirectory</Name>
+				<Source><![CDATA[
+    private Microsoft.WindowsAzure.Storage.File.CloudFileDirectory workingDirectory()
+    {
+        return directoryToUse;
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>init</Name>
+				<Source><![CDATA[
+    private void init(CSAzureStorageAccountInternalId azureStorageAccountInternalId, CSAzureStorageFileRelativePath folderPath)
+    {
+        // Everything should be in lower case
+        CSAzureStorageAccount azureStorageAccountInfo = CSAzureStorageAccount::find(azureStorageAccountInternalId);
+        if(!azureStorageAccountInfo || !azureStorageAccountInfo.StorageAccountName || !azureStorageAccountInfo.StorageAccountShareName)
+        {
+            throw error(strFmt('Invalid azure storage account internal ID: %1', azureStorageAccountInternalId));
+        }
+
+        // Cache values
+        storageAccountName = strLwr(azureStorageAccountInfo.StorageAccountName);
+        shareName = strLwr(azureStorageAccountInfo.StorageAccountShareName);
+        storageAccountKey = azureStorageAccountInfo.editEncryptDecryptStorageAccountKey(false);
+
+        workingFolderPath = strLwr(folderPath);
+        
+        // Initialize the Azure File Client
+        if(cloudFileClient == null)
+        {
+            cloudStorageAccount = Microsoft.WindowsAzure.Storage.CloudStorageAccount::Parse(this.connectionString());
+            cloudFileClient = cloudStorageAccount.CreateCloudFileClient();
+        }
+
+        // Get the Azure File Share
+        cloudFileShare = cloudFileClient.GetShareReference(shareName); 
+        Microsoft.WindowsAzure.Storage.File.FileRequestOptions fileRequestOptions = new  Microsoft.WindowsAzure.Storage.File.FileRequestOptions();
+        Microsoft.WindowsAzure.Storage.OperationContext operationContext = new Microsoft.WindowsAzure.Storage.OperationContext();
+        
+        if(!cloudFileShare.Exists(fileRequestOptions, operationContext))
+        {
+            throw Error(strFmt('Azure file share %1 does not exist on %2', shareName, azureStorageAccountInternalId));
+        }
+
+        // Get the ROOT directory
+        rootDirectory = cloudFileShare.GetRootDirectoryReference();
+        
+        // Get the working directory
+        writeToRoot = System.String::IsNullOrWhiteSpace(workingFolderPath);
+        if (writeToRoot)
+        {
+            fileDirectory = null;
+        }
+        else
+        {
+            fileDirectory = rootDirectory.GetDirectoryReference(workingFolderPath);
+            if(!fileDirectory.Exists(null, null))
+            {
+                throw error(strFmt('Azure file share path %1 does not exist on %2', workingFolderPath, azureStorageAccountInternalId));
+            }
+        }
+
+        directoryToUse = writeToRoot ? rootDirectory : fileDirectory;
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>uploadFromFile</Name>
+				<Source><![CDATA[
+				
+    /*
+	  SAMPLE of usage:
+	  
+	    // Step 0 ) Create the Azure file storage and configure the CSAzureStorageAccount
+		            NOTE: Please note that you would need to create a user interface for CSAzureStorageAccount as we use encryption to store the Key :-)
+					
+        // Step 1 ) Create a temporary local directory                
+        str temporaryfolder = CSAzureFileUtil::createLocalExportDirectory("d365fo");
+
+        
+        // Step 2) Store your temporary export data file under temporaryfolder
+        // ....... here you do your job to create the export data file
+  
+        
+        // Step 3) Upload the file
+        CSAzureFileUtil::uploadFromFile(
+		    "C:\\Temp\\Temporary\\my-data-file.xml", 
+			"my-data-file-on-azure-file.xml", 
+			"Subfolder1/Subfolder2/Subfolder3", 
+			"Internal-Key-To-Azure-Storage-Settings");
+
+        // Step 4) Cleanup
+        // ........If the upload did not throw any error, you can go ahead and delete the local temporary file / folder         
+        CSAzureFileUtil::cleanupLocalTemporaryLocation(temporaryfolder);
+    */
+	
+    public static void uploadFromFile(str localFilePath, Filename targetFileNameOnly, CSAzureStorageFileRelativePath targetFolderPath, CSAzureStorageAccountInternalId azureStorageAccountInternalId)
+    {
+        try
+        {
+            // prepare the target file name
+            targetFileNameOnly = strLwr(targetFileNameOnly);
+            targetFileNameOnly = strReplace(targetFileNameOnly, ' ', '-');
+
+            CSAzureFileUtil azureFileUtil = new CSAzureFileUtil();
+
+            azureFileUtil.init(azureStorageAccountInternalId, targetFolderPath);
+
+            // Get the working directory
+            Microsoft.WindowsAzure.Storage.File.CloudFileDirectory workingDir = azureFileUtil.workingDirectory();
+
+            // Get the file reference
+            Microsoft.WindowsAzure.Storage.File.CloudFile cloudFile = workingDir.GetFileReference(targetFileNameOnly);
+
+            // Create the file entry
+            System.IO.FileInfo fi = new System.IO.FileInfo(localFilePath);        
+            cloudFile.Create(fi.Length, null, null, null);
+
+            // Upload the file
+            cloudFile.UploadFromFile(localFilePath, System.IO.FileMode::Open, null, null, null);
+        }
+        catch
+        {
+            throw error(strFmt('Could not upload the file %1 to %2/%3 on %4', localFilePath, targetFolderPath, targetFileNameOnly, azureStorageAccountInternalId));
+        }
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>createLocalExportDirectory</Name>
+				<Source><![CDATA[
+    public static str createLocalExportDirectory(str _prefix)
+    {
+        str temporaryDirName = strFmt("%1_%2", _prefix, DMFPackageUtil::getGuidStr());
+        str tempDir = System.IO.Path::GetTempPath();
+        str packageDirPath = System.IO.Path::Combine(tempDir, temporaryDirName);
+        System.IO.Directory::CreateDirectory(packageDirPath);
+
+        return packageDirPath;
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>deleteLocalFileIgnoreError</Name>
+				<Source><![CDATA[
+    public static void deleteLocalFileIgnoreError(str filePath)
+    {
+        System.Exception ex;
+
+        try
+        {
+            System.IO.File::Delete(filePath);
+        }
+        catch(ex)
+        {
+		    // TODO: Log error message
+            // CSIntegrationLog::logMessage('', strFmt('Unable to delete file.  Ignoring error: %1', filePath), CSegrationLogType::Error);
+        }
+    }
+
+]]></Source>
+			</Method>
+			<Method>
+				<Name>cleanupLocalTemporaryLocation</Name>
+				<Source><![CDATA[
+    public static void cleanupLocalTemporaryLocation(str temporaryFolder)
+    {
+
+        System.IO.DirectoryInfo directoryInfo = new System.IO.DirectoryInfo(temporaryFolder);
+
+        System.IO.FileInfo[] files = directoryInfo.GetFiles();
+        
+        for(int i=0; i< files.Length; i++)
+        {
+            System.IO.FileInfo fileInfo = files.Get(i);
+            fileInfo.Delete();
+        }
+
+        System.IO.DirectoryInfo[] directories = directoryInfo.GetDirectories();
+        for(int i=0; i< directories.Length; i++)
+        {
+            System.IO.DirectoryInfo directory = directories.Get(i);
+            directory.Delete(true);
+        }
+
+        directoryInfo.Delete(true);
+    }
+
+]]></Source>
+			</Method>
+		</Methods>
+	</SourceCode>
+</AxClass>
