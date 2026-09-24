@@ -1,0 +1,9 @@
+# Browser profile holds your signed-in session cookies - never commit it
+profile/
+
+# Environment-specific / generated at run time
+config.json
+menu_items.json
+warmup_log.csv
+*.log
+__pycache__/

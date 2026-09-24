@@ -1,0 +1,15 @@
+{
+  "base_url": "https://YOUR-ENV.operations.dynamics.com",
+  "company": "USMF",
+  "browser_channel": "msedge",
+  "form_timeout_sec": 60,
+  "login_wait_sec": 300,
+  "delay": "2-5",
+  "skip_menu_item_types": [
+    "action",
+    "output"
+  ],
+  "exclude_mi": [],
+  "exclude_modules": [],
+  "selectors": {}
+}
