@@ -1,0 +1,44 @@
+<!--
+  © 2026 Mehrdad Ghazvinizadeh. All rights reserved, except as granted under CC BY-NC 4.0 (see LICENSE.md).
+  Copy the section below into your project's CLAUDE.md (or the instruction file your AI agent reads).
+-->
+
+## Code lookups: which tool to use
+
+Pick the cheapest tool that answers the question. Ask for names only first, then fetch details
+for the few items you need. Never read a whole AOT XML file to answer a simple question.
+
+| Question | Tool | Typical cost |
+|---|---|---|
+| Who reads, writes or calls field or method X (standard code) | `xref.ps1 uses Owner.member` | < 500 tokens, < 1 s |
+| CoC extensions, table/form extensions, event handlers of X | `d365fo find coc / extensions / handlers` | 0.5k–3k tokens, ~1 s |
+| Tables with a field of EDT X, relations, field list | `xref.ps1 fields-by-edt / relations / fields` | 0.1k–2k tokens |
+| Full structure of one object | `d365fo get table/class/form X` | up to 44k tokens for a large table |
+| Exact text or a pattern | `grep -l` on the model folders only | small output, 20–50 s on all packages |
+| Create or change code | `d365fo modify / generate` | — |
+| Check code before a build | `d365fo validate / bp`, `d365fo test` | — |
+
+Avoid: `d365fo find refs --xref` (can take 10+ minutes), `-o table` output (40–90% larger than JSON),
+reading AOT XML files over 100 KB.
+
+### Freshness
+
+- The cross-reference database only knows code from the last build with "Update cross references".
+  Check with `xref.ps1 status`.
+- The CLI index only knows code from the last `d365fo index refresh` (or `index sync <model>`).
+  Check with `d365fo index status`.
+- For code changed after that, refresh the index first or use `grep`, which reads the files directly.
+
+### Traps
+
+- The CLI names models, not packages: ApplicationSuite's model is `Foundation`.
+  A wrong `--model` returns 0 results without an error.
+- Cross-reference paths: code references look like `/Tables/SalesLine/Fields/SalesPrice`;
+  metadata looks like `Table/SalesLine/TableFieldReal/SalesPrice`. `[ExtensionOf]` is stored as `/Classes/ExtensionOf`.
+- Field references don't tell reads from writes. "Who writes X" needs a look at the code.
+- Treat 0 results as suspicious: cross-check with a second tool before concluding there are none.
+
+### Session type
+
+- Lookup-only session: use the cross-reference database and grep; load the CLI only for extension questions.
+- Development session: load the CLI; it is the only tool that writes, validates and tests.

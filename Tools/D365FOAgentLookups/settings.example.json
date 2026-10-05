@@ -1,0 +1,31 @@
+{
+  "env": {
+    "D365FO_XREF_SERVER": "(localdb)\\MSSQLLocalDB",
+    "D365FO_XREF_DB": "<your cross-reference database name>",
+    "D365FO_MAX_AOT_READ_KB": "100"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "pwsh -NoProfile -File \"<path-to>/D365FOAgentLookups/hooks/guard-large-aot-read.ps1\"" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "pwsh -NoProfile -File \"<path-to>/D365FOAgentLookups/hooks/index-sync.ps1\"" }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Edit(Metadata/<ReadOnlyModel>/**)",
+      "Write(Metadata/<ReadOnlyModel>/**)"
+    ]
+  }
+}
