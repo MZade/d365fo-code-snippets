@@ -100,6 +100,13 @@ new model or a change to your instructions, and compare.
 This is a first measurement. Agents, models and tools improve quickly, so the numbers will change. A follow-up will
 apply the tips above and measure again, including a full development task.
 
+## Disclaimer
+
+These are personal findings from experiments on one D365 F&O development environment. They are experimental and may
+not cover every scenario, version or configuration. The results, scripts and recommendations are provided as is,
+without warranty of any kind. Test them in your own environment before you rely on them. The views expressed here are
+my own. See also the disclaimer in the [repository README](../../README.md).
+
 ## Article
 
 The background and the full analysis: *CLI vs XRef DB vs grep: token benchmarks for AI-assisted D365 F&O development*
