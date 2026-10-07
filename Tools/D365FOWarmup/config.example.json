@@ -11,5 +11,67 @@
   ],
   "exclude_mi": [],
   "exclude_modules": [],
+  "include_mi": [
+    "PaymTerm",
+    {
+      "mi": "InventLocations",
+      "deep": {
+        "walk_rows": true,
+        "max_rows": 5
+      }
+    },
+    {
+      "mi": "CustTableListPage",
+      "company": "USMF",
+      "deep": false
+    },
+    {
+      "mi": "WHSLocDirTable",
+      "filters": [
+        {
+          "control": "WorkTransType",
+          "values": "all"
+        },
+        {
+          "control": "InventLocationId",
+          "values": [
+            "24",
+            "61"
+          ]
+        }
+      ],
+      "deep": {
+        "walk_rows": true,
+        "max_rows": 0
+      }
+    }
+  ],
+  "include_only": false,
+  "deep": {
+    "enabled": true,
+    "expand_fasttabs": true,
+    "open_tabs": true,
+    "sort_columns": true,
+    "sort_directions": [
+      "ascending",
+      "descending"
+    ],
+    "max_columns_per_grid": 0,
+    "walk_rows": false,
+    "max_rows": 10,
+    "explore_each_row": true,
+    "walk_rows_in_edit_mode": false,
+    "max_actions": 300,
+    "action_timeout_sec": 30
+  },
+  "deep_by_pattern": {
+    "SimpleListDetails": {
+      "walk_rows": true,
+      "max_rows": 5
+    },
+    "TableOfContents": {
+      "sort_columns": false
+    }
+  },
   "selectors": {}
 }
