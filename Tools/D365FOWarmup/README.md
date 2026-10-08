@@ -60,7 +60,7 @@ Command-line options apply to one run. Where an option and `config.json` both se
 | `--no-deep` | Open the include-list screens without the deep warmup |
 | `--inspect` | Print nav-pane DOM hints for fixing selectors, then exit |
 
-Exit codes: `0` ok, `1` failure, `2` sign-in required. On `2`, run once with `--headed`.
+Exit codes: `0` ok, `1` failure, `2` sign-in required, `3` [read-only guard](#read-only-guard) tripped. On `2`, run once with `--headed`.
 
 ## Configuration (`config.json`)
 `config.example.json` contains every setting with an example. A key you leave out keeps its default.
@@ -133,14 +133,15 @@ After an include-list screen loads, the deep warmup repeats these steps until no
 2. On each visible **grid**, sort each sortable column (A to Z, then Z to A) through the column header menu.
 3. Open each **tab** that is not selected: horizontal tabs, vertical tabs (parameter pages) and nested tabs, inner tabs first. The grids and FastTabs on a tab are handled before the next tab.
 
-With `walk_rows`, it then moves down the **main grid or list** with the Down arrow key. The main grid is the first visible grid with a selected row: the list on the left of a list/details page, or the grid of a list page. On each row it repeats steps 1–3 for the details (`explore_each_row`). The main grid itself is not sorted when its rows are walked, because a sort can move the selected row away from the top and the walk would then miss the rows above it.
+With `walk_rows`, it then moves down the **main grid or list** with the Down arrow key. Down is only pressed when a next row exists: on the last row of an editable grid, Down would create a new record. The main grid is the first visible grid with a selected row: the list on the left of a list/details page, or the grid of a list page. On each row it repeats steps 1–3 for the details (`explore_each_row`). The main grid itself is not sorted when its rows are walked, because a sort can move the selected row away from the top and the walk would then miss the rows above it.
 
 With `filters`, all of the above is repeated for every [filter combination](#filter-combinations).
 
 What the deep warmup touches:
 - FastTab headers, tab headers, the sort buttons in column header menus, the Down arrow key, and the filter controls you configure.
-- It never clicks a toolbar button, a link or a grid cell. To select a row, it focuses the active row and presses Down, so a hyperlink cell can't open another screen.
-- It only types into the filter controls you list in `filters`.
+- It never clicks a toolbar button, a link or a grid cell. To select a row, it focuses the active row and presses Down, so a hyperlink cell can't open another screen. It never presses Down on the last row.
+- It only types into the filter controls you list in `filters`, and only while the focus is in that control.
+- After every action the [read-only guard](#read-only-guard) checks the form.
 - FactBoxes and action pane tabs are left alone.
 
 ### Deep warmup options
@@ -155,7 +156,6 @@ What the deep warmup touches:
 | `walk_rows` | `false` | Walk the rows of the main grid / list |
 | `max_rows` | `10` | Rows to visit, including the first (`0` = all rows) |
 | `explore_each_row` | `true` | On each row, expand FastTabs, open tabs and sort the detail grids again |
-| `walk_rows_in_edit_mode` | `false` | Also walk rows on forms that open in edit mode (e.g. parameter pages) |
 | `max_actions` | `300` | Safety cap on actions per screen; per row with `explore_each_row` |
 | `action_timeout_sec` | `30` | Longest wait for one action (sort, tab, row, filter) to finish |
 
@@ -196,11 +196,22 @@ Some list/details pages have filter controls above the list, for example **Work 
 
 How it works:
 - The first filter is the outer loop.
-- A value is typed into the filter and committed with Tab, as a user would. The field gets keyboard focus rather than a click, because a filled lookup field is shown as a link.
+- In a combo box (such as Work order type), the value is picked from the opened list. In other fields it is typed and committed with Tab, as a user would. The field gets keyboard focus rather than a click, because a filled lookup field is shown as a link.
 - A filter that already has the value isn't set again, so the list reloads only when a filter actually changes.
-- A value that F&O doesn't accept is logged as an `error` in `deep_log.csv`.
+- A value that F&O doesn't accept is logged as an `error` in `deep_log.csv`, and that combination is skipped instead of being warmed with the wrong filter.
 
-For safety, filters are only used on a form that opens in **view mode**. There the record fields are locked, so the only editable fields are unbound controls such as filters. A read-only control is rejected, and the deep warmup stops if the form leaves view mode.
+For safety, filters are only used on a form that opens in **view mode**. There the record fields are locked, so the only editable fields are unbound controls such as filters. A read-only control, or one bound to a record field, is rejected, and the [read-only guard](#read-only-guard) stops the run if the form leaves view mode.
+
+### Read-only guard
+The tool must never create, change or delete data. After every deep warmup action (FastTab, tab, sort, row, filter) it checks the form:
+- The form must not switch to edit mode, unless it opened in edit mode.
+- A grid's row count must not change where navigation alone can't change it: after a FastTab or tab, no visible grid; after a sort, the sorted grid; after a row move, the main grid. (Detail grids reload when the row or a filter changes.)
+
+If a check fails, the run stops at once with exit code `3` and a `guard` line in `deep_log.csv`. Because F&O saves a changed record when you navigate away, nothing navigates after that. All further browser requests are aborted and the browser closes without running the page's unload handlers. Look at the form in F&O afterwards.
+
+The guard fails closed. A grid that loads more rows while it is walked can also stop the run, so use `max_rows` on long lists.
+
+The guard runs in the browser, so it lowers the risk but can't rule it out. **Run the tool with an F&O account whose security roles give view access only.** That's the only protection the server enforces.
 
 ### Run time
 Deep warmup takes time, because every sort reloads the grid (about a second each):
@@ -249,7 +260,7 @@ The selectors from `fasttab_collapsed` down run inside the page, so they must be
 - `status` is `ok`, `timeout`, `error` (for example an unknown menu item, with F&O's message in `detail`) or `noform`.
 - For deep-warmed screens, `detail` holds a summary such as `deep 84.2s: 7 fasttab, 21 tab, 30 sort, 4 row, 2 skipped`.
 
-`deep_log.csv` gets one line per deep warmup action: `timestamp, mi, form, pattern, filters, row, action, target, seconds, status, detail`. Use it to find which filter combination, row, tab or sort is slow. `action` is `filter`, `fasttab`, `tab`, `sort`, `row`, `form` or `limit`; `status` is `ok`, `timeout`, `skipped` or `error`.
+`deep_log.csv` gets one line per deep warmup action: `timestamp, mi, form, pattern, filters, row, action, target, seconds, status, detail`. Use it to find which filter combination, row, tab or sort is slow. `action` is `filter`, `fasttab`, `tab`, `sort`, `row`, `form`, `limit` or `guard`; `status` is `ok`, `timeout`, `skipped` or `error`.
 
 At the end, the console shows the average and median load time and the 10 slowest screens.
 
@@ -303,9 +314,9 @@ schtasks /Create /TN "D365FO Warmup" /SC DAILY /ST 06:30 /RL LIMITED `
 Run the task as the same Windows user who did the `--headed` sign-in, because the profile folder holds that user's session. Sessions expire eventually. Watch for exit code `2`.
 
 ## Notes and safety
-- Run it against **non-production** environments first, and use an account with appropriate (read-only) permissions where possible.
+- Run it against **non-production** environments first, with an account that has **view-only** security roles. See [Read-only guard](#read-only-guard).
 - Opening forms can still trigger form `init` logic, such as default records or number sequences on some setup forms. Add such screens to `exclude_mi`, or leave them out of `include_mi`.
-- Some screens open in edit mode (for example parameter pages). The deep warmup doesn't type or save there, doesn't use filters there, and doesn't walk rows there unless `walk_rows_in_edit_mode` is set.
+- Some screens open in edit mode (for example parameter pages). The deep warmup doesn't type or save there, doesn't use filters there, and never walks rows there.
 - Selectors were verified against the F&O web client at the time of writing. If a platform update breaks something, run `--headed --inspect` and override the selectors in `config.json`.
 
 For the version history, see [CHANGELOG.md](CHANGELOG.md).

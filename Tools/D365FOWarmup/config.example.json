@@ -60,7 +60,6 @@
     "walk_rows": false,
     "max_rows": 10,
     "explore_each_row": true,
-    "walk_rows_in_edit_mode": false,
     "max_actions": 300,
     "action_timeout_sec": 30
   },

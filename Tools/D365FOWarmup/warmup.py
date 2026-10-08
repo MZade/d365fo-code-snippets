@@ -16,7 +16,13 @@ Usage:
     python warmup.py --mi PaymTerm,InventLocations  # ad-hoc include list
     python warmup.py --headed --inspect             # print nav-pane DOM hints (selector debugging)
 
-Exit codes: 0 ok, 1 unexpected failure, 2 login required (run once with --headed).
+Read-only: the tool never saves, creates or deletes data. A guard checks the form after
+every deep warmup action; if the form switches to edit mode or a grid gains or loses rows,
+the run stops at once without saving (exit code 3). Use an F&O account with read-only
+security roles as well: that is the only guarantee enforced by the server.
+
+Exit codes: 0 ok, 1 unexpected failure, 2 login required (run once with --headed),
+3 read-only guard tripped.
 """
 import argparse
 import csv
@@ -41,7 +47,7 @@ LOG_FILE = HERE / "warmup_log.csv"
 DEEP_LOG_FILE = HERE / "deep_log.csv"
 PROFILE_DIR = HERE / "profile"
 
-EXIT_OK, EXIT_FAIL, EXIT_LOGIN = 0, 1, 2
+EXIT_OK, EXIT_FAIL, EXIT_LOGIN, EXIT_GUARD = 0, 1, 2, 3
 
 # Candidate selectors, tried in order. Override any of these in config.json -> "selectors".
 SELECTORS = {
@@ -100,7 +106,6 @@ DEFAULT_DEEP = {
     "walk_rows": False,             # move row by row through the main grid / list
     "max_rows": 10,                 # 0 = all rows
     "explore_each_row": True,       # on each row, open tabs/FastTabs and sort the detail grids again
-    "walk_rows_in_edit_mode": False,  # forms that open in edit mode (e.g. parameters) are not row-walked
     "max_actions": 300,             # safety cap per page (per row when explore_each_row)
     "action_timeout_sec": 30,
 }
@@ -180,6 +185,8 @@ def deep_options(cfg, item, pattern):
         opts.update({"enabled": True, **override})
     elif "deep" in item:
         opts["enabled"] = True  # an explicit "deep": true wins over a global "enabled": false
+    if opts.pop("walk_rows_in_edit_mode", False):
+        log("Ignoring walk_rows_in_edit_mode (removed in 1.2.0): rows are never walked on edit-mode forms.")
     return opts if opts["enabled"] else None
 
 
@@ -466,7 +473,7 @@ DISCOVER_JS = """([formName, sel, opts, done, skipGrids]) => {
                 if (!vis(h) || h.closest(sel.grid) !== g) return;
                 if (opts.max_columns_per_grid && ++n > opts.max_columns_per_grid) return;
                 const key = 'sort:' + grid + ':' + (h.dataset.dynControlname || text(h));
-                if (!doneSet.has(key)) todo.push({kind: 'sort', key, label: grid + ' / ' + text(h), id: tag(h)});
+                if (!doneSet.has(key)) todo.push({kind: 'sort', key, grid, label: grid + ' / ' + text(h), id: tag(h)});
             });
         });
     if (opts.open_tabs) {
@@ -497,8 +504,11 @@ MASTER_GRID_JS = """([formName, gridSel]) => {
     return g ? g.dataset.dynControlname : null;
 }"""
 
-# Returns the aria-rowindex of the grid's active row. With focus=true it also focuses a
-# field of that row (focus only, no click: clicking a hyperlink cell would open another form).
+# The grid's active row: its aria-rowindex, and whether a next row exists. Pressing Down on
+# the last row of an editable grid creates a new record, so the walk only presses Down when
+# the next row is rendered and within aria-rowcount. With focus=true it also focuses a field
+# of the active row (focus only, no click: clicking a hyperlink cell would open another form)
+# and reports whether the focus really landed in that row.
 ACTIVE_ROW_JS = """([formName, gridSel, gridName, focus]) => {
     const root = [...document.querySelectorAll('[data-dyn-form-name]')]
         .find(f => f.dataset.dynFormName === formName && f.getClientRects().length);
@@ -507,9 +517,65 @@ ACTIVE_ROW_JS = """([formName, gridSel, gridName, focus]) => {
         .find(g => g.dataset.dynControlname === gridName && g.getClientRects().length);
     const r = g && g.querySelector("[role=row][data-dyn-row-active='true']");
     if (!r) return null;
-    if (focus) { const f = r.querySelector('input, [tabindex]'); if (f) f.focus(); }
-    return r.getAttribute('aria-rowindex');
+    const index = +r.getAttribute('aria-rowindex');
+    const table = g.querySelector('[role=grid][aria-rowcount]');
+    const count = table ? +table.getAttribute('aria-rowcount') : 0;
+    const next = g.querySelector(`[role=row][aria-rowindex='${index + 1}']`);
+    let focused = false;
+    if (focus) {
+        const f = r.querySelector('input, [tabindex]');
+        if (f) f.focus();
+        focused = !!document.activeElement && r.contains(document.activeElement);
+    }
+    return {index, hasNext: !!next && index < count, focused};
 }"""
+
+# Read-only guard: the form's edit mode and the row count of each visible grid
+GUARD_STATE_JS = """([formName, gridSel]) => {
+    const root = [...document.querySelectorAll('[data-dyn-form-name]')]
+        .find(f => f.dataset.dynFormName === formName && f.getClientRects().length);
+    if (!root) return null;
+    const grids = {};
+    root.querySelectorAll(gridSel).forEach(g => {
+        const t = g.querySelector('[role=grid][aria-rowcount]');
+        if (t && g.dataset.dynControlname && g.getClientRects().length
+                && g.closest('[data-dyn-form-name]') === root)
+            grids[g.dataset.dynControlname] = +t.getAttribute('aria-rowcount');
+    });
+    return {editMode: root.classList.contains('editMode'), grids};
+}"""
+
+
+class ReadOnlyViolation(Exception):
+    """The form shows a sign of a data change. The run must stop without saving."""
+
+
+class Guard:
+    """Checks after every deep warmup action that the form still looks untouched.
+
+    Fails closed: the form switching to edit mode, or a grid's row count changing where it
+    can't change by navigation alone, raises ReadOnlyViolation.
+    """
+
+    def __init__(self, page, form):
+        self.page, self.form = page, form
+        self.state = self._read() or {"grids": {}}
+
+    def _read(self):
+        return self.page.evaluate(GUARD_STATE_JS, [self.form["name"], css("grid")])
+
+    def check(self, action, stable=None):
+        """stable: grids whose row count must stay the same (None = every visible grid)."""
+        now = self._read()
+        if now is None:
+            return  # the form went away; the caller reports that
+        if now["editMode"] and not self.form["editMode"]:
+            raise ReadOnlyViolation(f"form switched to edit mode after {action}")
+        for grid, count in now["grids"].items():
+            before = self.state["grids"].get(grid)
+            if before is not None and count != before and (stable is None or grid in stable):
+                raise ReadOnlyViolation(f"{grid} went from {before - 1} to {count - 1} rows after {action}")
+        self.state = now
 
 
 def form_info(page):
@@ -543,7 +609,10 @@ FILTER_INFO_JS = """([formName, control]) => {
         .find(e => e.dataset.dynControlname === control && e.getClientRects().length);
     if (!c) return null;
     const input = c.querySelector('input');
-    return {editable: !!input && !input.readOnly && !input.disabled, value: input ? input.value : '',
+    // On a view mode form, record fields are shown in view mode; a control that is still in
+    // edit mode is an unbound control such as a filter.
+    return {editable: !!input && !input.readOnly && !input.disabled && c.classList.contains('editMode'),
+            combo: c.dataset.dynRole === 'ComboBox', value: input ? input.value : '',
             options: [...c.querySelectorAll('[role=option]')].map(o => o.textContent.trim())};
 }"""
 
@@ -590,7 +659,7 @@ def filter_values(page, form, flt):
     if not info:
         raise ValueError(f"filter control '{flt['control']}' not found on {form['name']}")
     if not info["editable"]:
-        raise ValueError(f"filter control '{flt['control']}' is read-only")
+        raise ValueError(f"filter control '{flt['control']}' is read-only or bound to a record field")
     values = flt.get("values", "all")
     if isinstance(values, list):
         return [str(v) for v in values]
@@ -600,15 +669,38 @@ def filter_values(page, form, flt):
 
 
 def set_filter(page, form, control, value, opts):
-    """Type a value into a filter control and press Tab, like a user. Returns (status, detail)."""
-    field = filter_control(page, form, control).locator("input").first
+    """Set a filter control like a user. Returns (status, detail).
+
+    A combo box gets its option picked from the list (it ignores typed text); other
+    controls get the value typed and committed with Tab. Keys are only sent while the
+    focus is in the control.
+    """
+    info = page.evaluate(FILTER_INFO_JS, [form["name"], control])
+    if not info or not info["editable"]:
+        raise ValueError(f"filter control '{control}' is missing, read-only or bound to a record field")
+    box = filter_control(page, form, control)
+    field = box.locator("input").first
     field.focus()  # focus, not click: a filled lookup field is shown as a link
-    field.press("Control+a")
-    if value:
-        field.press_sequentially(value)
+    if not field.evaluate("e => e === document.activeElement"):
+        return "error", "could not focus the filter control"
+    if info["combo"]:
+        field.press("Alt+ArrowDown")
+        # The open list is moved out of the control; find it through the input's aria-controls
+        listbox = page.locator(f'[id="{field.get_attribute("aria-controls")}"]')
+        option = listbox.get_by_role("option", name=value, exact=True).first
+        try:
+            option.wait_for(state="visible", timeout=5000)
+        except PlaywrightTimeout:
+            field.press("Escape")
+            return "error", f"option '{value}' not shown in the combo box list"
+        option.click(timeout=10_000)
     else:
-        field.press("Delete")
-    field.press("Tab")
+        field.press("Control+a")
+        if value:
+            field.press_sequentially(value)
+        else:
+            field.press("Delete")
+        field.press("Tab")
     status = "ok" if wait_idle(page, opts["action_timeout_sec"], 0.5) else "timeout"
     actual = field.input_value()
     if actual.strip().lower() != value.strip().lower():
@@ -620,14 +712,16 @@ def deep_warm(page, item, form, opts, writer):
     """Expand FastTabs, open tabs, sort grid columns and walk rows on the current page.
 
     Only navigation inside the form is used: FastTab headers, tab headers, column header
-    sort buttons, the Down arrow key and the filter controls listed in item["filters"].
-    Nothing is edited, saved or run. With filters, all of this is repeated for every
-    combination of filter values. Every action is written to deep_log.csv.
-    Returns a one-line summary.
+    sort buttons, the Down arrow key (never on the last row) and the filter controls listed
+    in item["filters"]. Nothing is edited, saved or run. After every action the Guard checks
+    that the form still looks untouched and raises ReadOnlyViolation if not. With filters,
+    all of this is repeated for every combination of filter values. Every action is written
+    to deep_log.csv. Returns a one-line summary.
     """
     sel = {k: css(k) for k in ("fasttab_collapsed", "tab", "tab_exclude", "grid", "grid_header")}
     counts, t_start = {}, time.time()
     row_label, filter_label = "", ""
+    guard = Guard(page, form)
 
     def record(kind, target, secs, status, detail=""):
         key = kind if status == "ok" else status
@@ -648,8 +742,11 @@ def deep_warm(page, item, form, opts, writer):
                     status = "ok" if wait_idle(page, opts["action_timeout_sec"], 0.5) else "timeout"
             except PlaywrightError as e:
                 status, detail = "error", str(e).splitlines()[0][:150]
-            record(cand["kind"], cand["label"] + (f" {direction}" if direction else ""), time.time() - t0,
-                   status, detail)
+            label = cand["label"] + (f" {direction}" if direction else "")
+            record(cand["kind"], label, time.time() - t0, status, detail)
+            # A sort can move the active row, which reloads the detail grids: only the
+            # sorted grid must keep its row count. Tabs and FastTabs must not change any.
+            guard.check(f"{cand['kind']} {label}", [cand["grid"]] if direction else None)
             if status == "skipped":
                 break
 
@@ -670,23 +767,40 @@ def deep_warm(page, item, form, opts, writer):
         return True
 
     def walk_rows(grid):
-        """Move down the main grid / list with the Down key. Returns False if the form went away."""
+        """Move down the main grid / list with the Down key. Returns False if the form went away.
+
+        Down is only pressed when the next row exists: on the last row of an editable grid
+        it would create a new record.
+        """
         nonlocal row_label
-        current = page.evaluate(ACTIVE_ROW_JS, [form["name"], sel["grid"], grid, False])
+        row = page.evaluate(ACTIVE_ROW_JS, [form["name"], sel["grid"], grid, False])
+        if row is None:
+            return False
+        current = row["index"]
         row_label = f"{grid} #{current}"
         visited = 1  # the row the list opened on was explored already
         while not opts["max_rows"] or visited < opts["max_rows"]:
             t0 = time.time()
-            if page.evaluate(ACTIVE_ROW_JS, [form["name"], sel["grid"], grid, True]) is None:
+            row = page.evaluate(ACTIVE_ROW_JS, [form["name"], sel["grid"], grid, True])
+            if row is None:
                 return False
+            if row["index"] != current:
+                record("row", f"active row moved to #{row['index']} outside the walk", 0, "skipped")
+                break
+            if not row["hasNext"]:
+                break  # last row (or the next row isn't rendered): never press Down here
+            if not row["focused"]:
+                record("row", "could not focus the active row", 0, "skipped")
+                break
             page.keyboard.press("ArrowDown")
             status = "ok" if wait_idle(page, opts["action_timeout_sec"], 0.5) else "timeout"
-            new = page.evaluate(ACTIVE_ROW_JS, [form["name"], sel["grid"], grid, False])
-            if new is None:
+            guard.check(f"row move from {grid} #{current}", [grid])
+            row = page.evaluate(ACTIVE_ROW_JS, [form["name"], sel["grid"], grid, False])
+            if row is None:
                 return False
-            if new == current:
-                break  # last row
-            current, row_label = new, f"{grid} #{new}"
+            if row["index"] == current:
+                break
+            current, row_label = row["index"], f"{grid} #{row['index']}"
             visited += 1
             record("row", row_label, time.time() - t0, status)
             if opts["explore_each_row"] and not explore([grid]):
@@ -697,7 +811,7 @@ def deep_warm(page, item, form, opts, writer):
         nonlocal row_label
         row_label = ""
         walk = opts["walk_rows"]
-        if walk and form["editMode"] and not opts["walk_rows_in_edit_mode"]:
+        if walk and form["editMode"]:
             record("row", "form opens in edit mode", 0, "skipped")
             walk = False
         grid = page.evaluate(MASTER_GRID_JS, [form["name"], sel["grid"]]) if walk else None
@@ -728,7 +842,8 @@ def deep_warm(page, item, form, opts, writer):
 
     try:
         for combo in combinations():
-            filter_label = ", ".join(f"{c}={v}" for c, v in combo)
+            filter_label, row_label = ", ".join(f"{c}={v}" for c, v in combo), ""
+            applied = True
             for control, value in combo:
                 info = page.evaluate(FILTER_INFO_JS, [form["name"], control])
                 if info and info["value"].strip().lower() == value.strip().lower():
@@ -736,6 +851,13 @@ def deep_warm(page, item, form, opts, writer):
                 t0 = time.time()
                 status, detail = set_filter(page, form, control, value, opts)
                 record("filter", f"{control}={value}", time.time() - t0, status, detail)
+                guard.check(f"filter {control}={value}", [])  # the lists reload: only edit mode is checked
+                if status == "error":
+                    applied = False
+                    break
+            if not applied:
+                record("filter", "combination skipped: a filter could not be set", 0, "skipped")
+                continue
             if combo:
                 info = form_info(page)
                 if not info or info["name"] != form["name"] or info["editMode"]:
@@ -744,6 +866,9 @@ def deep_warm(page, item, form, opts, writer):
             if not warm_once():
                 record("form", "form closed or navigated away", 0, "error")
                 break
+    except ReadOnlyViolation as e:
+        record("guard", "read-only guard tripped", 0, "error", str(e))
+        raise
     except ValueError as e:
         record("filter", "filters not applied", 0, "error", str(e))
     except PlaywrightError as e:
@@ -853,6 +978,21 @@ def resolve_includes(includes, menu_items):
     return result
 
 
+def hard_stop(ctx):
+    """Close the browser without saving.
+
+    F&O saves a changed record when you navigate away, so nothing may navigate after the
+    guard trips. All further requests are aborted, then the pages are closed without
+    running their unload handlers.
+    """
+    try:
+        ctx.route("**/*", lambda route: route.abort())
+        for p in ctx.pages:
+            p.close(run_before_unload=False)
+    except PlaywrightError:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser(description="Warm up D365 F&O by opening menu screens at random.")
     ap.add_argument("--headed", action="store_true", help="show the browser (first sign-in / debugging)")
@@ -922,6 +1062,10 @@ def main():
                 f"in company {cfg['company']}")
             summary(warm(page, cfg, includes, items, args))
             return EXIT_OK
+        except ReadOnlyViolation as e:
+            log(f"READ-ONLY GUARD TRIPPED: {e}. Stopping without saving; check the form in F&O.")
+            hard_stop(ctx)
+            return EXIT_GUARD
         finally:
             ctx.close()
 
