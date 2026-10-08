@@ -2,6 +2,24 @@
 
 All notable changes to D365FO Warmup are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the tool uses [semantic versioning](https://semver.org/).
 
+## [1.2.0] - 2026-10-08
+
+### Added
+- **Read-only guard.** After every deep warmup action it checks that the form hasn't switched to edit mode and that no grid gained or lost rows where it can't by navigation alone. If a check fails, the run stops at once with exit code `3`. No navigation happens after that (F&O saves a changed record when you navigate away). All requests are aborted and the browser closes without running unload handlers. The deep log gets a `guard` line.
+
+### Fixed
+- **The row walk created new records.** Pressing Down on the last row of an editable grid creates a record in F&O. The walk kept pressing Down because each new record became the new last row. Down is now only pressed when the next row exists, and only while the focus is in the active row.
+- **Combo box filters weren't set.** Typing into a combo box such as Work order type was ignored, so every combination ran with the form's default value. The option is now picked from the opened list.
+- When a filter value can't be set, that combination is skipped instead of being warmed with the wrong filter.
+- Filter lines in `deep_log.csv` no longer show the last row of the previous combination.
+
+### Removed
+- `walk_rows_in_edit_mode`. Rows are never walked on forms that open in edit mode. If the setting is still in your config, it's ignored and a message is logged.
+
+### Safety
+- Filter controls bound to a record field are rejected, and keys are only sent while the focus is in the filter control.
+- The README says to run the tool with a view-only F&O account, the only protection the server enforces.
+
 ## [1.1.0] - 2026-10-07
 
 ### Added
@@ -31,7 +49,7 @@ All notable changes to D365FO Warmup are listed here. The format follows [Keep a
 - Only display menu items can be included. Other types are rejected when the config loads, and so are entries the menu cache lists as action or output items.
 - The deep warmup never clicks toolbar buttons, links or grid cells. It selects rows with the Down arrow key, so a hyperlink cell can't open another screen.
 - It only types into the filter controls you configure, and only on forms that open in view mode. It stops if the form leaves view mode.
-- It doesn't walk rows on forms that open in edit mode, unless `walk_rows_in_edit_mode` is set.
+- It doesn't walk rows on forms that open in edit mode, unless `walk_rows_in_edit_mode` is set (removed in 1.2.0).
 - FactBoxes and action pane tabs are skipped.
 
 ## [1.0.0] - 2026-09-24
@@ -42,5 +60,6 @@ All notable changes to D365FO Warmup are listed here. The format follows [Keep a
 - `--count`, `--duration`, `--delay`, `--company`, `--modules`, `--seed`, `--refresh`, `--headed` and `--inspect`.
 - `warmup_log.csv` with the load time of each screen, and a summary of the slowest screens.
 
-[1.1.0]: https://github.com/MZade/d365fo-code-snippets/commits/master/Tools/D365FOWarmup
+[1.2.0]: https://github.com/MZade/d365fo-code-snippets/commits/master/Tools/D365FOWarmup
+[1.1.0]: https://github.com/MZade/d365fo-code-snippets/commit/3737ecf
 [1.0.0]: https://github.com/MZade/d365fo-code-snippets/commit/dba470a
